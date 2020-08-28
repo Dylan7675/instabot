@@ -4,6 +4,8 @@ import time
 import datetime
 import logging
 import json
+import re
+from bs4 import BeautifulSoup
 
 class InstaBot:
     """
@@ -20,7 +22,7 @@ class InstaBot:
     log_mod = 0 - Log mod: log_mod = 0 log to console, log_mod = 1 log to file,
     log_mod = 2 no log.
 
-    https://github.com/LevPasha/instabot.py
+    https://github.com/Dylan7675/instabot
     """
 
     url = 'https://www.instagram.com/'
@@ -32,8 +34,10 @@ class InstaBot:
     url_login = 'https://www.instagram.com/accounts/login/ajax/'
     url_logout = 'https://www.instagram.com/accounts/logout/'
 
-    user_agent = ("Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/48.0.2564.103 Safari/537.36")
+    CHROME_WIN_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36'
+    STORIES_UA = 'Instagram 123.0.0.21.114 (iPhone; CPU iPhone OS 11_4 like Mac OS X; en_US; en-US; scale=2.00; 750x1334) AppleWebKit/605.1.15'
+
+    user_agent = CHROME_WIN_UA
     accept_language = 'ru-RU,ru;q=0.8,en-US;q=0.6,en;q=0.4'
 
     # If instagram ban you - query return 400 error.
@@ -92,31 +96,26 @@ class InstaBot:
     def login(self):
         log_string = 'Try to login by %s...' % (self.user_login)
         self.write_log(log_string)
-        self.s.cookies.update ({'sessionid' : '', 'mid' : '', 'ig_pr' : '1',
-                               'ig_vw' : '1920', 'csrftoken' : '',
-                               's_network' : '', 'ds_user_id' : ''})
+
+        self.s.headers.update({'Referer': self.url, 'user-agent': self.STORIES_UA})
+        r = self.s.get(self.url)
+
+        self.s.headers.update({'X-CSRFToken': r.cookies['csrftoken']})
+
         self.login_post = {'username' : self.user_login,
                            'password' : self.user_password}
-        self.s.headers.update ({'Accept-Encoding' : 'gzip, deflate',
-                               'Accept-Language' : self.accept_language,
-                               'Connection' : 'keep-alive',
-                               'Content-Length' : '0',
-                               'Host' : 'www.instagram.com',
-                               'Origin' : 'https://www.instagram.com',
-                               'Referer' : 'https://www.instagram.com/',
-                               'User-Agent' : self.user_agent,
-                               'X-Instagram-AJAX' : '1',
-                               'X-Requested-With' : 'XMLHttpRequest'})
-        r = self.s.get(self.url)
-        self.s.headers.update({'X-CSRFToken' : r.cookies['csrftoken']})
+
         time.sleep(5 * random.random())
         login = self.s.post(self.url_login, data=self.login_post,
                             allow_redirects=True)
-        self.s.headers.update({'X-CSRFToken' : login.cookies['csrftoken']})
+        self.s.headers.update({'X-CSRFToken': login.cookies['csrftoken']})
         self.csrftoken = login.cookies['csrftoken']
         time.sleep(5 * random.random())
 
+        self.cookies = login.cookies
+
         if login.status_code == 200:
+            self.s.headers.update({'user-agent': self.user_agent})
             r = self.s.get('https://www.instagram.com/')
             finder = r.text.find(self.user_login)
             if finder != -1:
@@ -128,6 +127,7 @@ class InstaBot:
                 self.write_log('Login error! Check your login data!')
         else:
             self.write_log('Login error! Connenction error!')
+
 
     def logout(self):
         now_time = datetime.datetime.now()
@@ -165,11 +165,12 @@ class InstaBot:
                                    : all_data_end]
                     all_data = json.loads(json_str)
 
-                    self.media_by_tag = list(all_data['entry_data']['TagPage'][0]\
-                                            ['tag']['media']['nodes'])
-                except:
+                    self.media_by_tag = (all_data['entry_data']['TagPage'][0]['graphql']['hashtag']
+                    ['edge_hashtag_to_media']['edges'])
+                    self.write_log(self.media_by_tag)
+                except Exception as e:
                     self.media_by_tag = []
-                    self.write_log("Exept on get_media!")
+                    self.write_log(f"Exept on get_media! - {e}")
                     time.sleep(60)
             else:
                 return 0
@@ -184,19 +185,19 @@ class InstaBot:
                     # Media count by this tag.
                     if media_size > 0 or media_size < 0:
                         media_size -= 1
-                        if (self.media_by_tag[i]['likes']['count'] < \
+                        if (self.media_by_tag[i]['node']['edge_liked_by']['count'] < \
                             self.more_than_likes):
                             log_string = "Try to like media: %s" %\
-                                         (self.media_by_tag[i]['id'])
+                                         (self.media_by_tag[i]['node']['id'])
                             self.write_log(log_string)
-                            like = self.like(self.media_by_tag[i]['id'])
+                            like = self.like(self.media_by_tag[i]['node']['id'])
                             if like != 0:
                                 if like.status_code == 200:
                                     # Like, all ok!
                                     self.error_400 = 0
                                     self.like_conter += 1
                                     log_string = "Liked: %s. Like #%i." %\
-                                                 (self.media_by_tag[i]['id'],
+                                                 (self.media_by_tag[i]['node']['id'],
                                                   self.like_conter)
                                     self.write_log(log_string)
                                 elif like.status_code == 400:
@@ -214,9 +215,13 @@ class InstaBot:
                                                   % (like.status_code)
                                     self.write_log(log_string)
                                     # Some error.
+
+                                if like.status_code == 429:
+                                    self.write_log("Too many requests.... Cooling Down")
+                                    time.sleep(300)
+                                # Http request limit 3000/day?
+                                time.sleep(30)
                                 i += 1
-                                time.sleep(self.like_delay*0.9 +
-                                           self.like_delay*0.2*random.random())
                         #else:
                             # This media have to many likes!
             else:
@@ -299,8 +304,12 @@ class InstaBot:
                 self.hdrl.setFormatter(formatter)
                 self.logger.setLevel(level=logging.INFO)
                 self.logger.addHandler(self.hdrl)
-            # Log to log file.
+            # Log to log file and print to console.
             try:
                 self.logger.info(log_text)
+            except UnicodeEncodeError:
+                print("Your text have unicode problem!")
+            try:
+                print(log_text)
             except UnicodeEncodeError:
                 print("Your text have unicode problem!")
