@@ -4,8 +4,8 @@ import time
 import datetime
 import logging
 import json
-import re
-from bs4 import BeautifulSoup
+from pathlib import Path
+import os.path
 
 class InstaBot:
     """
@@ -50,8 +50,16 @@ class InstaBot:
     # All likes counter.
     like_conter = 0
 
-    # Log setting.
-    log_file_path = '/var/www/python/log/'
+    # Log settings.
+    log_file_path = Path.home() /".instabot" /"log"
+
+    # Make the log directory if it doesn't exist
+    if not os.path.exists(log_file_path):
+        try:
+            os.makedirs(log_file_path)
+        except ValueError:
+            print(ValueError)
+
     log_file = 0
 
     # Other.
@@ -300,6 +308,7 @@ class InstaBot:
                 formatter = logging.Formatter('%(asctime)s - %(name)s '
                             '- %(message)s')
                 self.logger = logging.getLogger(self.user_login)
+
                 self.hdrl = logging.FileHandler(self.log_full_path, mode='w')
                 self.hdrl.setFormatter(formatter)
                 self.logger.setLevel(level=logging.INFO)
